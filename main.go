@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"io"
 	"os"
 	"bufio"
 	"encoding/csv"
@@ -16,6 +15,7 @@ import (
 func main() {
 
 	var count2 int64
+	var recordsCount int64
 	file, err := os.Open("/home/siva/LatestAppOpenUsers_20170512_to_20171107.txt")
 	defer file.Close()
 
@@ -24,7 +24,7 @@ func main() {
 	}
 
 	dbConn := getDBConnection()
-	dbConn.SetMaxOpenConns(10000)
+	dbConn.SetMaxOpenConns(10)
 
 	defer dbConn.Close()
 	err = dbConn.Ping()
@@ -50,77 +50,86 @@ func main() {
 	defer csvfile1.Close()
 
 
-	limiter := time.Tick(time.Nanosecond * 1000000)
+	limiter := time.Tick(time.Nanosecond * 333333333)
 
 	var line string
+	var linecount int
 	for {
-		line, err = reader.ReadString('\n')
-		if err != nil {
-			break
-		}
-
+		linecount =0
 		var userdetails platformUserDetails
-		uid :=line[0:16]
-		//uid="WcKAaVIchw737usm"
-		fmt.Println("select * from platform_user_details where  hike_uid=\""+strings.TrimSpace(uid)+"\"")
+		query := ""
+		for linecount<1000 {
+			line, err = reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			uid :=line[0:16]
+			if linecount == 0 {
+				query = query + "\"" + strings.TrimSpace(uid) + "\""
+			} else {
+				query = query + ",\"" + strings.TrimSpace(uid) + "\""
+			}
+			linecount++
+		}
 		<-limiter
 
-		rows2,err := dbConn.Query("select * from platform_user_details where  hike_uid=\""+strings.TrimSpace(uid)+"\"")
+		rows2,err := dbConn.Query("select * from platform_user_details where  hike_uid in ("+query+")")
 		if(err!=nil){
-			fmt.Println("Not able to query the hike uid in the DB -->",uid,err)
+			fmt.Println(err)
 		}
 
 
-		if(rows2.Next()) {
+		for rows2.Next() {
 			err := rows2.Scan(&userdetails.ID,&userdetails.HikeUID, &userdetails.Msisdn, &userdetails.Name,
 				&userdetails.Gender,&userdetails.Circle, &userdetails.CreateTime, &userdetails.UpdateTime)
 			fmt.Println(err)
-		}
-		rows2.Close()
-
-		userDetailCreateTime := strings.Split(userdetails.CreateTime.String(),"+")
-		userDtlCrTime := userDetailCreateTime[0]
+			userDetailCreateTime := strings.Split(userdetails.CreateTime.String(),"+")
+			userDtlCrTime := userDetailCreateTime[0]
 
 
-		userDetailUpdateTime := strings.Split(userdetails.UpdateTime.String(),"+")
-		userDtlUpTime := userDetailUpdateTime[0]
+			userDetailUpdateTime := strings.Split(userdetails.UpdateTime.String(),"+")
+			userDtlUpTime := userDetailUpdateTime[0]
 
 
-		msisdnReqd2 := userdetails.Msisdn
-		if strings.HasPrefix(msisdnReqd2,"+9") {
-			msisdnReqd2=strings.Replace(msisdnReqd2,"+9","1",1)
-		} else if strings.HasPrefix(msisdnReqd2,"+8") {
-			msisdnReqd2=strings.Replace(msisdnReqd2,"+8","2",1)
-		} else if strings.HasPrefix(msisdnReqd2,"+7") {
-			msisdnReqd2=strings.Replace(msisdnReqd2,"+7","3",1)
-		} else {
-			continue
-		}
-
-
-		count2++
-		records2 := [][]string{
-			{ToIntegerVal(count2),userdetails.HikeUID,"+"+msisdnReqd2,ToString(userdetails.Name),
-				ToString(userdetails.Gender),ToString(userdetails.Circle), strings.TrimSpace(userDtlCrTime),strings.TrimSpace(userDtlUpTime)},
-		}
-
-		for _, value := range records2 {
-			err := writer1.Write(value)
-			if(err!=nil){
-				fmt.Println(err.Error())
-				fmt.Println("Not able to write the records into csv file")
+			msisdnReqd2 := userdetails.Msisdn
+			if strings.HasPrefix(msisdnReqd2,"+9") {
+				msisdnReqd2=strings.Replace(msisdnReqd2,"+9","1",1)
+			} else if strings.HasPrefix(msisdnReqd2,"+8") {
+				msisdnReqd2=strings.Replace(msisdnReqd2,"+8","2",1)
+			} else if strings.HasPrefix(msisdnReqd2,"+7") {
+				msisdnReqd2=strings.Replace(msisdnReqd2,"+7","3",1)
+			} else {
+				continue
 			}
+
+			count2++
+			recordsCount++
+			records2 := [][]string{
+				{ToIntegerVal(count2),userdetails.HikeUID,"+"+msisdnReqd2,ToString(userdetails.Name),
+					ToString(userdetails.Gender),ToString(userdetails.Circle), strings.TrimSpace(userDtlCrTime),strings.TrimSpace(userDtlUpTime)},
+			}
+
+			for _, value := range records2 {
+				err := writer1.Write(value)
+				if(err!=nil){
+					fmt.Println(err.Error())
+					fmt.Println("Not able to write the records into csv file")
+				}
+			}
+
+			outputfile1.WriteString(ToIntegerVal(count2)+"::"+userdetails.HikeUID+"::"+"+"+msisdnReqd2+"::"+ToString(
+				userdetails.Name)+"::"+ ToString(userdetails.Gender)+"::"+ToString(userdetails.Circle)+"::"+
+				"::"+strings.TrimSpace(userDtlCrTime)+"::"+strings.TrimSpace(userDtlUpTime)+"\n")
 		}
 
-		outputfile1.WriteString(ToIntegerVal(count2)+"::"+userdetails.HikeUID+"::"+"+"+msisdnReqd2+"::"+ToString(
-			userdetails.Name)+"::"+ ToString(userdetails.Gender)+"::"+ToString(userdetails.Circle)+"::"+
-				"::"+strings.TrimSpace(userDtlCrTime)+"::"+strings.TrimSpace(userDtlUpTime)+"\n")
-
+		rows2.Close()
+		fmt.Println("Number of records exported from the DB",recordsCount)
 	}
+	fmt.Println("Final Number of records exported from the DB",recordsCount)
 
-	if err != io.EOF {
-		fmt.Printf(" > Failed!: %v\n", err)
-	}
+	//if err != io.EOF {
+	//	fmt.Printf(" > Failed!: %v\n", err)
+	//}
 
 }
 
